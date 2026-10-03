@@ -1,28 +1,20 @@
 #!/bin/bash
+# vps container entrypoint.
+# The admin API intentionally binds to loopback only (see serve() in admin-api.py),
+# so we run it on 127.0.0.1:8081 and forward $PORT -> 127.0.0.1:8081 with a
+# stdlib TCP proxy. This keeps the loopback security model intact on Cloud Run.
 set -euo pipefail
 
-# 1. Replace port FIRST
-sed -i "s/8080/$PORT/g" /etc/xray/config.json
-echo "[1] Port set to: $PORT"
+PORT="${PORT:-8080}"
 
-# 2. Start dashboard FIRST, bind localhost only
-python3 /server.py --host 127.0.0.1 --port 8081 &
+echo "[1] Starting VPN admin API on 127.0.0.1:8081 ..."
+python3 /app/admin-api.py --host 127.0.0.1 --port 8081 &
+API_PID=$!
 sleep 1
+if ! kill -0 "$API_PID" 2>/dev/null; then
+  echo "[ERROR] admin-api.py failed to start" >&2
+  exit 1
+fi
 
-# 3. Start IP manager
-/ip-manager.sh start &
-sleep 1
-
-# 4. START XRAY — THIS MUST LISTEN NOW
-echo "[2] Starting Xray Core..."
-/usr/bin/xray run -c /etc/xray/config.json &
-
-# 5. WAIT UNTIL PORT IS LISTENING — critical for Cloud Run
-echo "[3] Waiting for port $PORT to open..."
-until nc -z 127.0.0.1 $PORT; do
-  sleep 0.2
-done
-echo "[✅] SUCCESS: Listening on $PORT — Ready!"
-
-# Keep container alive
-wait
+echo "[2] Forwarding 0.0.0.0:${PORT} -> 127.0.0.1:8081 ..."
+exec python3 /app/port-forward.py --listen-port "$PORT" --target-host 127.0.0.1 --target-port 8081
