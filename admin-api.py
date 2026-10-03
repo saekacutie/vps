@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlsplit
 
 DB_PATH = Path(os.environ.get("VPN_ADMIN_DB", "/var/lib/vpnfront/admin.sqlite3"))
 STATUS_PATH = Path(os.environ.get("VPN_STATUS_PATH", "/var/lib/vpnfront/status.json"))
+WEB_DIR = Path(os.environ.get("VPN_WEB_DIR", Path(__file__).resolve().parent / "web-panel"))
 SESSION_COOKIE = "vpn_session"
 SESSION_TTL = 8 * 60 * 60
 CLIENT_SESSION_COOKIE = "vpn_client_session"
@@ -718,6 +719,43 @@ def resolve_service_unit(service_key):
 
 
 class AdminHandler(BaseHTTPRequestHandler):
+    STATIC_TYPES = {
+        ".html": "text/html; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".json": "application/json",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".ico": "image/x-icon",
+    }
+
+    def serve_static(self, path):
+        """Serve the bundled web-panel UI. Path-traversal safe."""
+        rel = "index.html" if path in ("/", "") else path.lstrip("/")
+        target = (WEB_DIR / rel).resolve()
+        try:
+            target.relative_to(WEB_DIR.resolve())
+        except ValueError:
+            self.send_json(403, {"error": "Forbidden."})
+            return
+        if target.is_dir():
+            target = target / "index.html"
+        if not target.is_file():
+            self.send_json(404, {"error": "Not found."})
+            return
+        ctype = self.STATIC_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        try:
+            data = target.read_bytes()
+        except OSError:
+            self.send_json(500, {"error": "Unable to read file."})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     server_version = "VPNAdmin"
     sys_version = ""
 
@@ -993,6 +1031,9 @@ class AdminHandler(BaseHTTPRequestHandler):
                 self.send_json(503, {"error": "VPN account data is unavailable."})
             return
 
+        if not path.startswith("/api/"):
+            self.serve_static(path)
+            return
         self.send_json(404, {"error": "Not found."})
 
     def do_POST(self):

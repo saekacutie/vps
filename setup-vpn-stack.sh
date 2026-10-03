@@ -23,7 +23,14 @@ DEFAULT_IPSEC_UDP_500=500
 DEFAULT_IPSEC_UDP_4500=4500
 DEFAULT_UDPGW_PORT=7300
 ADMIN_USERNAME="${VPN_ADMIN_USERNAME:-saeka}"
-ADMIN_PASSWORD="${VPN_ADMIN_PASSWORD:-}"
+# Never hardcode the admin password: env override, or a generated one-off.
+if [ -z "${VPN_ADMIN_PASSWORD:-}" ]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=
+' | head -c 24)"
+  echo "[i] Generated admin password (override with VPN_ADMIN_PASSWORD env var)"
+else
+  ADMIN_PASSWORD="$VPN_ADMIN_PASSWORD"
+fi
 
 usage() {
   cat <<EOF
